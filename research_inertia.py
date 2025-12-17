@@ -550,20 +550,22 @@ def analyze_dependencies(elements_data):
     return {'analysis_data': analysis_data, 'valid_data': valid_data}
 
 
-def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
-    """Строит графики с оптимизированным количеством подписей
+def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
+    """Строит графики с подписями ВСЕХ элементов (каждый график в отдельном окне)
 
     Args:
         params: Словарь с данными для анализа
-        label_every_nth: Подписывать каждый N-й элемент (по умолчанию 3)
-        reduced_dpi: Разрешение изображения (по умолчанию 150, вместо 300)
+        label_every_nth: Подписывать каждый N-й элемент (по умолчанию 1 = ВСЕ элементы)
+        reduced_dpi: Разрешение изображения (по умолчанию 150)
     """
     analysis_data = params.get('analysis_data', [])
+    valid_data = params.get('valid_data', [])
+
     if not analysis_data:
         print("Нет данных для построения графиков")
         return
 
-    print(f"Генерация графиков с метками каждого {label_every_nth}-го элемента, DPI={reduced_dpi}...")
+    print(f"Генерация графиков с метками ВСЕХ элементов, DPI={reduced_dpi}...")
 
     symbols = [d['symbol'] for d in analysis_data]
     zeff_vals = [d['zeff'] for d in analysis_data]
@@ -592,30 +594,38 @@ def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
     zeff_f = [d['zeff'] for d in filtered_data]
     k_f = [d['k'] for d in filtered_data]
 
-    # Создаем фигуру с адаптивным размером
-    fig = plt.figure(figsize=(18, 14))
+    # ============================================================================
+    # ГРАФИК 1: k vs Z_eff (отдельное окно)
+    # ============================================================================
+    print("\n1. Создание графика: k vs Z_eff")
+    fig1 = plt.figure(figsize=(16, 12))
+    ax1 = fig1.add_subplot(111)
+    ax1.loglog(zeff_f, k_f, 'o', alpha=0.3, markersize=8)
 
-    # 1. Основной график: k vs Z_eff
-    ax1 = plt.subplot(2, 2, 1)
-    scatter1 = ax1.loglog(zeff_f, k_f, 'o', alpha=0.3, markersize=8)
-
-    # Подписываем только каждый N-й элемент для снижения нагрузки
+    # Подписываем ВСЕ элементы
     for i, (z, k, sym) in enumerate(zip(zeff_f, k_f, symbols_f)):
-        if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+        if i % label_every_nth == 0:
             ax1.text(z, k, sym,
-                     fontsize=7,
+                     fontsize=8,
                      ha='center',
                      va='center',
                      alpha=0.8,
                      transform=ax1.transData)
 
-    ax1.set_xlabel('Z_eff (эффективный заряд ядра)', fontsize=12)
-    ax1.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax1.set_title(f'Зависимость k от Z_eff\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
+    ax1.set_xlabel('Z_eff (эффективный заряд ядра)', fontsize=14)
+    ax1.set_ylabel('Коэффициент k (кг/м³)', fontsize=14)
+    ax1.set_title('Зависимость k от Z_eff (все элементы подписаны)', fontsize=16, pad=20)
     ax1.grid(True, alpha=0.3)
 
-    # 2. k vs Z_eff/V
-    ax2 = plt.subplot(2, 2, 2)
+    plt.tight_layout()
+    plt.savefig('graph_1_k_vs_zeff.png', dpi=reduced_dpi, bbox_inches='tight')
+    print(f"   Сохранен: graph_1_k_vs_zeff.png")
+    plt.close(fig1)
+
+    # ============================================================================
+    # ГРАФИК 2: k vs Z_eff/V (отдельное окно)
+    # ============================================================================
+    print("2. Создание графика: k vs Z_eff/V")
 
     # Собираем данные для этого графика
     zv_data = []
@@ -624,26 +634,36 @@ def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
             zv_data.append((d['zeff_over_v'], d['k'], d['symbol']))
 
     if zv_data:
+        fig2 = plt.figure(figsize=(16, 12))
+        ax2 = fig2.add_subplot(111)
+
         zv_vals, k_zv, sym_zv = zip(*zv_data)
         ax2.loglog(zv_vals, k_zv, 'o', alpha=0.3, markersize=8)
 
+        # Подписываем ВСЕ элементы
         for i, (zv, k, sym) in enumerate(zip(zv_vals, k_zv, sym_zv)):
-            if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+            if i % label_every_nth == 0:
                 ax2.text(zv, k, sym,
-                         fontsize=7,
+                         fontsize=8,
                          ha='center',
                          va='center',
                          alpha=0.8,
                          transform=ax2.transData)
 
-    ax2.set_xlabel('Z_eff / V (м⁻³)', fontsize=12)
-    ax2.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax2.set_title(f'k vs Z_eff/V\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
-    ax2.grid(True, alpha=0.3)
+        ax2.set_xlabel('Z_eff / V (м⁻³)', fontsize=14)
+        ax2.set_ylabel('Коэффициент k (кг/м³)', fontsize=14)
+        ax2.set_title('k vs Z_eff/V (все элементы подписаны)', fontsize=16, pad=20)
+        ax2.grid(True, alpha=0.3)
 
-    # 3. k vs Z
-    ax3 = plt.subplot(2, 2, 3)
-    valid_data = params.get('valid_data', [])
+        plt.tight_layout()
+        plt.savefig('graph_2_k_vs_zeff_over_v.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"   Сохранен: graph_2_k_vs_zeff_over_v.png")
+        plt.close(fig2)
+
+    # ============================================================================
+    # ГРАФИК 3: k vs Z (отдельное окно)
+    # ============================================================================
+    print("3. Создание графика: k vs Z")
 
     # Собираем данные для графика Z vs k
     zk_data = []
@@ -652,24 +672,38 @@ def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
             zk_data.append((e['atomic_number'], e['k_coefficient'], e['symbol']))
 
     if zk_data:
+        fig3 = plt.figure(figsize=(16, 12))
+        ax3 = fig3.add_subplot(111)
+
         z_vals, k_z, sym_z = zip(*zk_data)
         ax3.loglog(z_vals, k_z, 'o', alpha=0.3, markersize=8)
 
+        # Подписываем ВСЕ элементы
         for i, (z, k, sym) in enumerate(zip(z_vals, k_z, sym_z)):
-            if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+            if i % label_every_nth == 0:
                 ax3.text(z, k, sym,
-                         fontsize=7,
+                         fontsize=8,
                          ha='center',
                          va='center',
                          alpha=0.8)
 
-    ax3.set_xlabel('Атомный номер Z', fontsize=12)
-    ax3.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax3.set_title(f'Зависимость k от Z\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
-    ax3.grid(True, alpha=0.3)
+        ax3.set_xlabel('Атомный номер Z', fontsize=14)
+        ax3.set_ylabel('Коэффициент k (кг/м³)', fontsize=14)
+        ax3.set_title('Зависимость k от Z (все элементы подписаны)', fontsize=16, pad=20)
+        ax3.grid(True, alpha=0.3)
 
-    # 4. График по блокам
-    ax4 = plt.subplot(2, 2, 4)
+        plt.tight_layout()
+        plt.savefig('graph_3_k_vs_z.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"   Сохранен: graph_3_k_vs_z.png")
+        plt.close(fig3)
+
+    # ============================================================================
+    # ГРАФИК 4: k vs Z_eff по типам элементов (отдельное окно)
+    # ============================================================================
+    print("4. Создание графика: k vs Z_eff по типам элементов")
+
+    fig4 = plt.figure(figsize=(16, 12))
+    ax4 = fig4.add_subplot(111)
 
     colors = {'s': '#FF6B6B', 'p': '#4ECDC4', 'd': '#45B7D1', 'f': '#96CEB4'}
     marker_size = 8
@@ -698,46 +732,47 @@ def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
                        markersize=marker_size,
                        label=f'{block}-элементы')
 
-            # Подписываем только каждый N-й элемент в блоке
+            # Подписываем ВСЕ элементы в блоке
             for i, (z, k, sym) in enumerate(zip(zeff_block, k_block, symbols_block)):
-                if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+                if i % label_every_nth == 0:
                     ax4.text(z, k, sym,
-                             fontsize=6,
+                             fontsize=7,
                              ha='center',
                              va='center',
                              alpha=0.7,
                              color=colors[block])
 
-    ax4.set_xlabel('Z_eff', fontsize=12)
-    ax4.set_ylabel('k (кг/м³)', fontsize=12)
-    ax4.set_title(f'k vs Z_eff по типам элементов\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
+    ax4.set_xlabel('Z_eff', fontsize=14)
+    ax4.set_ylabel('k (кг/м³)', fontsize=14)
+    ax4.set_title('k vs Z_eff по типам элементов (все элементы подписаны)', fontsize=16, pad=20)
     ax4.grid(True, alpha=0.3)
-    ax4.legend(loc='best')
+    ax4.legend(loc='best', fontsize=12)
 
-    # Настраиваем layout с учетом подписей
-    plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.08,
-                        wspace=0.25, hspace=0.3)
+    plt.tight_layout()
+    plt.savefig('graph_4_k_vs_zeff_by_blocks.png', dpi=reduced_dpi, bbox_inches='tight')
+    print(f"   Сохранен: graph_4_k_vs_zeff_by_blocks.png")
+    plt.close(fig4)
 
-    # Сохраняем с оптимизированным DPI
-    plt.savefig('all_elements_analysis.png', dpi=reduced_dpi, bbox_inches='tight', pad_inches=0.5)
-    print(f"\nОсновной график сохранен как 'all_elements_analysis.png' (DPI={reduced_dpi})")
-    plt.close(fig)  # Закрываем фигуру для освобождения памяти
-
-    # Дополнительный график: гистограмма распределения k
-    fig2, ax5 = plt.subplots(figsize=(10, 6))  # Уменьшенный размер
+    # ============================================================================
+    # ГРАФИК 5: Распределение коэффициентов k (отдельное окно)
+    # ============================================================================
+    print("5. Создание графика: Распределение коэффициентов k")
 
     k_values = [e['k_coefficient'] for e in valid_data if e.get('k_coefficient')]
 
     if k_values:
+        fig5 = plt.figure(figsize=(14, 10))
+        ax5 = fig5.add_subplot(111)
+
         # Используем логарифмические бины для гистограммы
         log_k = np.log10(k_values)
         bins = np.logspace(np.log10(min(k_values)), np.log10(max(k_values)), 30)
 
         ax5.hist(k_values, bins=bins, edgecolor='black', alpha=0.7)
         ax5.set_xscale('log')
-        ax5.set_xlabel('Коэффициент k (кг/м³)', fontsize=12)
-        ax5.set_ylabel('Количество элементов', fontsize=12)
-        ax5.set_title('Распределение коэффициентов k (логарифмическая шкала)', fontsize=14)
+        ax5.set_xlabel('Коэффициент k (кг/м³)', fontsize=14)
+        ax5.set_ylabel('Количество элементов', fontsize=14)
+        ax5.set_title('Распределение коэффициентов k (логарифмическая шкала)', fontsize=16)
         ax5.grid(True, alpha=0.3, which='both')
 
         # Добавляем статистические линии
@@ -752,16 +787,16 @@ def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
         # Добавляем аннотации для интересных областей
         ax5.annotate(f'Всего элементов: {len(k_values)}',
                      xy=(0.05, 0.95), xycoords='axes fraction',
-                     fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+                     fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
-        ax5.legend(loc='upper right')
+        ax5.legend(loc='upper right', fontsize=12)
 
         plt.tight_layout()
-        plt.savefig('k_distribution.png', dpi=reduced_dpi, bbox_inches='tight')
-        print(f"Гистограмма сохранена как 'k_distribution.png' (DPI={reduced_dpi})")
-        plt.close(fig2)  # Закрываем фигуру для освобождения памяти
+        plt.savefig('graph_5_k_distribution.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"   Сохранен: graph_5_k_distribution.png")
+        plt.close(fig5)
 
-    # Удалили plt.show() чтобы избежать проблем с отображением
+    print("\nВсе графики успешно созданы и сохранены!")
 
 
 def export_data_to_csv(elements_data):
@@ -800,145 +835,6 @@ def export_data_to_csv(elements_data):
     return filename
 
 
-def plot_optimized_labels(params, reduced_dpi=150):
-    """Строит графики с оптимизированным размещением подписей
-
-    Args:
-        params: Словарь с данными для анализа
-        reduced_dpi: Разрешение изображения (по умолчанию 150)
-    """
-    analysis_data = params.get('analysis_data', [])
-    valid_data = params.get('valid_data', [])
-
-    if not analysis_data:
-        return
-
-    print(f"Генерация дополнительных графиков с оптимизацией, DPI={reduced_dpi}...")
-
-    # Подготовка данных
-    symbols = [d['symbol'] for d in analysis_data]
-    zeff_vals = [d['zeff'] for d in analysis_data]
-    k_vals = [d['k'] for d in analysis_data]
-
-    # Создаем график с уменьшенным размером
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 5))
-
-    # 1. График k vs Z_eff с умным позиционированием
-    ax1.loglog(zeff_vals, k_vals, 'o', alpha=0.5, markersize=10, color='blue')
-
-    # Группируем близкие точки и подписываем только по одной из группы
-    points = list(zip(zeff_vals, k_vals, symbols))
-    points.sort(key=lambda x: x[0])  # Сортируем по Z_eff
-
-    labeled_points = set()
-    cluster_threshold = 0.05  # 5% разницы для кластеризации
-
-    for i, (x, y, sym) in enumerate(points):
-        # Проверяем, не находимся ли мы в уже размеченном кластере
-        in_cluster = False
-        for labeled in labeled_points:
-            lx, ly, lsym = points[labeled]
-            if abs(x - lx) / lx < cluster_threshold and abs(y - ly) / ly < cluster_threshold:
-                in_cluster = True
-                break
-
-        if not in_cluster:
-            # Подписываем эту точку
-            offset_x = x * 0.02
-            offset_y = y * 0.02
-
-            # Чередуем направление смещения
-            if i % 4 == 0:
-                offset_x, offset_y = offset_x, offset_y
-            elif i % 4 == 1:
-                offset_x, offset_y = -offset_x, offset_y
-            elif i % 4 == 2:
-                offset_x, offset_y = offset_x, -offset_y
-            else:
-                offset_x, offset_y = -offset_x, -offset_y
-
-            ax1.text(x + offset_x, y + offset_y, sym,
-                     fontsize=8,
-                     ha='center',
-                     va='center',
-                     alpha=0.9,
-                     bbox=dict(boxstyle="round,pad=0.1", facecolor="white", alpha=0.7))
-            labeled_points.add(i)
-
-    ax1.set_xlabel('Z_eff', fontsize=12)
-    ax1.set_ylabel('k (кг/м³)', fontsize=12)
-    ax1.set_title('k vs Z_eff\n(умное позиционирование подписей)', fontsize=14)
-    ax1.grid(True, alpha=0.3)
-
-    # 2. График k vs Z
-    ax2.loglog([e['atomic_number'] for e in valid_data if e.get('k_coefficient')],
-               [e['k_coefficient'] for e in valid_data if e.get('k_coefficient')],
-               'o', alpha=0.5, markersize=10, color='green')
-
-    # Подписываем каждый 3-й элемент для Z графика
-    zk_points = [(e['atomic_number'], e['k_coefficient'], e['symbol'])
-                 for e in valid_data if e.get('k_coefficient')]
-
-    for i, (z, k, sym) in enumerate(zk_points):
-        if i % 3 == 0:  # Подписываем каждый третий элемент
-            ax2.text(z, k, sym,
-                     fontsize=8,
-                     ha='center',
-                     va='center',
-                     alpha=0.9,
-                     bbox=dict(boxstyle="round,pad=0.1", facecolor="white", alpha=0.7))
-
-    ax2.set_xlabel('Атомный номер Z', fontsize=12)
-    ax2.set_ylabel('k (кг/м³)', fontsize=12)
-    ax2.set_title('k vs Z\n(каждый 3-й элемент подписан)', fontsize=14)
-    ax2.grid(True, alpha=0.3)
-
-    # 3. График по блокам с подписями только характерных элементов
-    colors = {'s': '#FF6B6B', 'p': '#4ECDC4', 'd': '#45B7D1', 'f': '#96CEB4'}
-
-    # Характерные элементы для каждого блока (для подписей)
-    characteristic_elements = {
-        's': ['H', 'Li', 'Na', 'K', 'Rb', 'Cs', 'Fr', 'Be', 'Mg', 'Ca', 'Sr', 'Ba', 'Ra'],
-        'p': ['B', 'C', 'N', 'O', 'F', 'Al', 'Si', 'P', 'S', 'Cl', 'Ga', 'Ge', 'As', 'Se', 'Br', 'In', 'Sn', 'Sb', 'Te',
-              'I', 'Tl', 'Pb', 'Bi'],
-        'd': ['Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
-              'Y', 'Zr', 'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd',
-              'La', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg'],
-        'f': ['Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu',
-              'Th', 'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm', 'Md', 'No', 'Lr']
-    }
-
-    for block in colors.keys():
-        block_data = [(e['zeff'], e['k_coefficient'], e['symbol'])
-                      for e in valid_data
-                      if e.get('block') == block and e.get('zeff') and e.get('k_coefficient')]
-
-        if block_data:
-            zeff_b, k_b, sym_b = zip(*block_data)
-            ax3.loglog(zeff_b, k_b, 'o', color=colors[block],
-                       alpha=0.6, markersize=8, label=f'{block}-элементы')
-
-            # Подписываем только характерные элементы
-            for z, k, sym in zip(zeff_b, k_b, sym_b):
-                if sym in characteristic_elements[block]:
-                    ax3.text(z, k, sym,
-                             fontsize=7,
-                             ha='center',
-                             va='center',
-                             alpha=0.8,
-                             color=colors[block],
-                             bbox=dict(boxstyle="round,pad=0.1", facecolor="white", alpha=0.5))
-
-    ax3.set_xlabel('Z_eff', fontsize=12)
-    ax3.set_ylabel('k (кг/м³)', fontsize=12)
-    ax3.set_title('k vs Z_eff по типам элементов\n(подписаны характерные элементы)', fontsize=14)
-    ax3.grid(True, alpha=0.3)
-    ax3.legend(loc='best')
-
-    plt.tight_layout()
-    plt.savefig('optimized_labels.png', dpi=reduced_dpi, bbox_inches='tight')
-    print(f"График с оптимизированными подписями сохранен как 'optimized_labels.png' (DPI={reduced_dpi})")
-    plt.close(fig)  # Закрываем фигуру для освобождения памяти
 
 
 def main():
@@ -949,8 +845,8 @@ def main():
                         help='Принудительный пересчет данных (игнорировать кэш и БД)')
     parser.add_argument('--no-db', action='store_true',
                         help='Не использовать базу данных (только JSON кэш)')
-    parser.add_argument('--label-every', type=int, default=3,
-                        help='Подписывать каждый N-й элемент на графиках (по умолчанию: 3)')
+    parser.add_argument('--label-every', type=int, default=1,
+                        help='Подписывать каждый N-й элемент на графиках (по умолчанию: 1 = все элементы)')
     parser.add_argument('--dpi', type=int, default=150,
                         help='Разрешение изображений (по умолчанию: 150)')
     parser.add_argument('--skip-plots', action='store_true',
@@ -984,10 +880,9 @@ def main():
     if params and not args.skip_plots:
         # Построение графиков с настраиваемыми параметрами
         print("\n" + "=" * 70)
-        print("ПОСТРОЕНИЕ ГРАФИКОВ")
+        print("ПОСТРОЕНИЕ ГРАФИКОВ (КАЖДЫЙ В ОТДЕЛЬНОМ ФАЙЛЕ)")
         print("=" * 70)
         plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi)
-        plot_optimized_labels(params, reduced_dpi=args.dpi)
 
         # Экспорт данных
         export_data_to_csv(elements_data)
