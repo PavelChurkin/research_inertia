@@ -1,6 +1,8 @@
 import sqlite3
 import math
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to prevent display issues
 import matplotlib.pyplot as plt
 from scipy import stats
 from mendeleev import element
@@ -9,13 +11,193 @@ import json
 import os
 import time
 from datetime import datetime
+import argparse
 
 
-def load_or_calculate_data(force_reload=False):
-    """Загружает данные из JSON или рассчитывает заново"""
+# ============================================================================
+# DATABASE FUNCTIONS
+# ============================================================================
+
+def init_database(db_path='atomic_data.db'):
+    """Инициализирует базу данных SQLite"""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Создание таблицы элементов
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS elements (
+        atomic_number INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        atomic_mass REAL,
+        atomic_mass_kg REAL,
+        atomic_radius_pm REAL,
+        atomic_volume_m3 REAL,
+        k_coefficient REAL,
+        k_log10 REAL,
+        period INTEGER,
+        element_group INTEGER,
+        zeff REAL,
+        block TEXT,
+
+        -- Additional properties
+        density REAL,
+        en_allen REAL,
+        en_pauling REAL,
+        electron_affinity REAL,
+        vdw_radius REAL,
+        covalent_radius_cordero REAL,
+        metallic_radius REAL,
+        atomic_volume REAL,
+
+        -- Structural properties
+        lattice_structure TEXT,
+        lattice_constant REAL,
+
+        -- Thermodynamic properties
+        melting_point REAL,
+        boiling_point REAL,
+        specific_heat_capacity REAL,
+        thermal_conductivity REAL,
+
+        -- Electromagnetic properties
+        electrical_resistivity REAL,
+        magnetic_ordering TEXT,
+
+        -- Computed derived parameters
+        zeff_over_v REAL,
+        zeff2_over_v REAL,
+        k_over_zeff REAL,
+        surface_area REAL,
+        cross_section REAL,
+        mass_density_atomic REAL,
+
+        -- Metadata
+        calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # Создание таблицы метаданных
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS cache_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # Создание индексов
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_k_coefficient ON elements(k_coefficient)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_zeff ON elements(zeff)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_block ON elements(block)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_period ON elements(period)')
+
+    # Сохранение версии схемы
+    cursor.execute('''
+    INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
+    VALUES ('schema_version', '1.0', CURRENT_TIMESTAMP)
+    ''')
+
+    conn.commit()
+    conn.close()
+    print(f"База данных инициализирована: {db_path}")
+
+
+def save_element_to_db(element_data, db_path='atomic_data.db'):
+    """Сохраняет данные элемента в базу данных"""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Подготовка данных для вставки
+    columns = list(element_data.keys())
+    placeholders = ','.join(['?' for _ in columns])
+    column_names = ','.join(columns)
+
+    # Специальная обработка для поля 'group' -> 'element_group'
+    if 'group' in element_data:
+        element_data['element_group'] = element_data.pop('group')
+        columns = list(element_data.keys())
+        column_names = ','.join(columns)
+
+    values = [element_data[col] for col in columns]
+
+    try:
+        cursor.execute(f'''
+        INSERT OR REPLACE INTO elements ({column_names})
+        VALUES ({placeholders})
+        ''', values)
+        conn.commit()
+    except Exception as e:
+        print(f"Ошибка сохранения элемента {element_data.get('symbol', '?')}: {e}")
+    finally:
+        conn.close()
+
+
+def load_elements_from_db(db_path='atomic_data.db'):
+    """Загружает все элементы из базы данных"""
+    if not os.path.exists(db_path):
+        return None
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('SELECT * FROM elements ORDER BY atomic_number')
+        rows = cursor.fetchall()
+
+        elements_data = []
+        for row in rows:
+            element_dict = dict(row)
+            # Преобразуем element_group обратно в group
+            if 'element_group' in element_dict:
+                element_dict['group'] = element_dict.pop('element_group')
+            elements_data.append(element_dict)
+
+        print(f"Загружено {len(elements_data)} элементов из базы данных")
+        return elements_data
+    except Exception as e:
+        print(f"Ошибка загрузки из базы данных: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_db_metadata(db_path='atomic_data.db'):
+    """Получает метаданные из базы данных"""
+    if not os.path.exists(db_path):
+        return None
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('SELECT key, value, updated_at FROM cache_metadata')
+        metadata = {row[0]: {'value': row[1], 'updated_at': row[2]} for row in cursor.fetchall()}
+        return metadata
+    except:
+        return None
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# DATA LOADING AND CALCULATION
+# ============================================================================
+
+def load_or_calculate_data(force_reload=False, use_db=True, db_path='atomic_data.db'):
+    """Загружает данные из базы данных, JSON или рассчитывает заново"""
     cache_file = 'atomic_data_cache.json'
 
-    # Если есть кэш и не принудительная перезагрузка
+    # Приоритет 1: Загрузка из базы данных
+    if use_db and not force_reload:
+        elements_data = load_elements_from_db(db_path)
+        if elements_data:
+            print(f"Данные успешно загружены из базы данных ({len(elements_data)} элементов)")
+            return elements_data
+
+    # Приоритет 2: Загрузка из JSON кэша
     if os.path.exists(cache_file) and not force_reload:
         print(f"Загрузка данных из кэша: {cache_file}")
         try:
@@ -58,7 +240,15 @@ def load_or_calculate_data(force_reload=False):
 
     print(f"\nУспешно обработано: {valid_elements} элементов")
 
-    # Сохраняем в кэш
+    # Сохраняем в базу данных
+    if use_db:
+        print("\nСохранение данных в базу данных...")
+        init_database(db_path)
+        for elem_data in elements_data:
+            save_element_to_db(elem_data.copy(), db_path)
+        print(f"Данные сохранены в базу данных: {db_path}")
+
+    # Сохраняем в JSON кэш (для обратной совместимости)
     cache_data = {
         'cache_version': 2,
         'created_at': datetime.now().isoformat(),
@@ -69,9 +259,9 @@ def load_or_calculate_data(force_reload=False):
     try:
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
-        print(f"\nДанные сохранены в кэш: {cache_file}")
+        print(f"Данные также сохранены в JSON кэш: {cache_file}")
     except Exception as e:
-        print(f"Ошибка сохранения кэша: {e}")
+        print(f"Ошибка сохранения JSON кэша: {e}")
 
     return elements_data
 
@@ -360,12 +550,20 @@ def analyze_dependencies(elements_data):
     return {'analysis_data': analysis_data, 'valid_data': valid_data}
 
 
-def plot_all_elements_with_labels(params):
-    """Строит графики со всеми подписанными элементами"""
+def plot_all_elements_with_labels(params, label_every_nth=3, reduced_dpi=150):
+    """Строит графики с оптимизированным количеством подписей
+
+    Args:
+        params: Словарь с данными для анализа
+        label_every_nth: Подписывать каждый N-й элемент (по умолчанию 3)
+        reduced_dpi: Разрешение изображения (по умолчанию 150, вместо 300)
+    """
     analysis_data = params.get('analysis_data', [])
     if not analysis_data:
         print("Нет данных для построения графиков")
         return
+
+    print(f"Генерация графиков с метками каждого {label_every_nth}-го элемента, DPI={reduced_dpi}...")
 
     symbols = [d['symbol'] for d in analysis_data]
     zeff_vals = [d['zeff'] for d in analysis_data]
@@ -401,27 +599,19 @@ def plot_all_elements_with_labels(params):
     ax1 = plt.subplot(2, 2, 1)
     scatter1 = ax1.loglog(zeff_f, k_f, 'o', alpha=0.3, markersize=8)
 
-    # Подписываем элементы с интеллектуальным позиционированием
+    # Подписываем только каждый N-й элемент для снижения нагрузки
     for i, (z, k, sym) in enumerate(zip(zeff_f, k_f, symbols_f)):
-        # Более контролируемые смещения
-        angle = (i * 137.5) % 360  # Используем золотой угол для распределения
-        distance = 0.04  # 4% от размера точки
-
-        # Конвертируем полярные координаты в смещения
-        offset_x = distance * z * math.cos(math.radians(angle))
-        offset_y = distance * k * math.sin(math.radians(angle))
-
-        # Используем textcoords='data' для привязки к данным
-        ax1.text(z, k, sym,
-                 fontsize=7,
-                 ha='center',
-                 va='center',
-                 alpha=0.8,
-                 transform=ax1.transData)
+        if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+            ax1.text(z, k, sym,
+                     fontsize=7,
+                     ha='center',
+                     va='center',
+                     alpha=0.8,
+                     transform=ax1.transData)
 
     ax1.set_xlabel('Z_eff (эффективный заряд ядра)', fontsize=12)
     ax1.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax1.set_title('Зависимость k от Z_eff\n(все элементы подписаны)', fontsize=14, pad=20)
+    ax1.set_title(f'Зависимость k от Z_eff\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
     ax1.grid(True, alpha=0.3)
 
     # 2. k vs Z_eff/V
@@ -438,22 +628,17 @@ def plot_all_elements_with_labels(params):
         ax2.loglog(zv_vals, k_zv, 'o', alpha=0.3, markersize=8)
 
         for i, (zv, k, sym) in enumerate(zip(zv_vals, k_zv, sym_zv)):
-            angle = (i * 137.5) % 360
-            distance = 0.04
-
-            offset_x = distance * zv * math.cos(math.radians(angle))
-            offset_y = distance * k * math.sin(math.radians(angle))
-
-            ax2.text(zv, k, sym,
-                     fontsize=7,
-                     ha='center',
-                     va='center',
-                     alpha=0.8,
-                     transform=ax2.transData)
+            if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+                ax2.text(zv, k, sym,
+                         fontsize=7,
+                         ha='center',
+                         va='center',
+                         alpha=0.8,
+                         transform=ax2.transData)
 
     ax2.set_xlabel('Z_eff / V (м⁻³)', fontsize=12)
     ax2.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax2.set_title('k vs Z_eff/V\n(все элементы подписаны)', fontsize=14, pad=20)
+    ax2.set_title(f'k vs Z_eff/V\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
     ax2.grid(True, alpha=0.3)
 
     # 3. k vs Z
@@ -471,19 +656,16 @@ def plot_all_elements_with_labels(params):
         ax3.loglog(z_vals, k_z, 'o', alpha=0.3, markersize=8)
 
         for i, (z, k, sym) in enumerate(zip(z_vals, k_z, sym_z)):
-            # Для графика Z vs k используем фиксированные смещения
-            offset_x = 0.3 if i % 2 == 0 else -0.3
-            offset_y = 0.03 * k if i % 3 == 0 else -0.03 * k
-
-            ax3.text(z + offset_x, k + offset_y, sym,
-                     fontsize=7,
-                     ha='center',
-                     va='center',
-                     alpha=0.8)
+            if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+                ax3.text(z, k, sym,
+                         fontsize=7,
+                         ha='center',
+                         va='center',
+                         alpha=0.8)
 
     ax3.set_xlabel('Атомный номер Z', fontsize=12)
     ax3.set_ylabel('Коэффициент k (кг/м³)', fontsize=12)
-    ax3.set_title('Зависимость k от Z\n(все элементы подписаны)', fontsize=14, pad=20)
+    ax3.set_title(f'Зависимость k от Z\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
     ax3.grid(True, alpha=0.3)
 
     # 4. График по блокам
@@ -516,24 +698,19 @@ def plot_all_elements_with_labels(params):
                        markersize=marker_size,
                        label=f'{block}-элементы')
 
-            # Подписываем элементы в блоке
+            # Подписываем только каждый N-й элемент в блоке
             for i, (z, k, sym) in enumerate(zip(zeff_block, k_block, symbols_block)):
-                angle = (i * 137.5) % 360
-                distance = 0.05
-
-                offset_x = distance * z * math.cos(math.radians(angle))
-                offset_y = distance * k * math.sin(math.radians(angle))
-
-                ax4.text(z, k, sym,
-                         fontsize=6,
-                         ha='center',
-                         va='center',
-                         alpha=0.7,
-                         color=colors[block])
+                if i % label_every_nth == 0:  # Подписываем только каждый N-й элемент
+                    ax4.text(z, k, sym,
+                             fontsize=6,
+                             ha='center',
+                             va='center',
+                             alpha=0.7,
+                             color=colors[block])
 
     ax4.set_xlabel('Z_eff', fontsize=12)
     ax4.set_ylabel('k (кг/м³)', fontsize=12)
-    ax4.set_title('k vs Z_eff по типам элементов\n(все элементы подписаны)', fontsize=14, pad=20)
+    ax4.set_title(f'k vs Z_eff по типам элементов\n(каждый {label_every_nth}-й элемент подписан)', fontsize=14, pad=20)
     ax4.grid(True, alpha=0.3)
     ax4.legend(loc='best')
 
@@ -541,12 +718,13 @@ def plot_all_elements_with_labels(params):
     plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.08,
                         wspace=0.25, hspace=0.3)
 
-    # Сохраняем с правильными параметрами
-    plt.savefig('all_elements_analysis.png', dpi=300, bbox_inches='tight', pad_inches=0.5)
-    print("\nОсновной график сохранен как 'all_elements_analysis.png'")
+    # Сохраняем с оптимизированным DPI
+    plt.savefig('all_elements_analysis.png', dpi=reduced_dpi, bbox_inches='tight', pad_inches=0.5)
+    print(f"\nОсновной график сохранен как 'all_elements_analysis.png' (DPI={reduced_dpi})")
+    plt.close(fig)  # Закрываем фигуру для освобождения памяти
 
     # Дополнительный график: гистограмма распределения k
-    fig2, ax5 = plt.subplots(figsize=(12, 8))
+    fig2, ax5 = plt.subplots(figsize=(10, 6))  # Уменьшенный размер
 
     k_values = [e['k_coefficient'] for e in valid_data if e.get('k_coefficient')]
 
@@ -579,10 +757,11 @@ def plot_all_elements_with_labels(params):
         ax5.legend(loc='upper right')
 
         plt.tight_layout()
-        plt.savefig('k_distribution.png', dpi=300, bbox_inches='tight')
-        print("Гистограмма сохранена как 'k_distribution.png'")
+        plt.savefig('k_distribution.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"Гистограмма сохранена как 'k_distribution.png' (DPI={reduced_dpi})")
+        plt.close(fig2)  # Закрываем фигуру для освобождения памяти
 
-    plt.show()
+    # Удалили plt.show() чтобы избежать проблем с отображением
 
 
 def export_data_to_csv(elements_data):
@@ -621,21 +800,28 @@ def export_data_to_csv(elements_data):
     return filename
 
 
-def plot_optimized_labels(params):
-    """Строит графики с оптимизированным размещением подписей"""
+def plot_optimized_labels(params, reduced_dpi=150):
+    """Строит графики с оптимизированным размещением подписей
+
+    Args:
+        params: Словарь с данными для анализа
+        reduced_dpi: Разрешение изображения (по умолчанию 150)
+    """
     analysis_data = params.get('analysis_data', [])
     valid_data = params.get('valid_data', [])
 
     if not analysis_data:
         return
 
+    print(f"Генерация дополнительных графиков с оптимизацией, DPI={reduced_dpi}...")
+
     # Подготовка данных
     symbols = [d['symbol'] for d in analysis_data]
     zeff_vals = [d['zeff'] for d in analysis_data]
     k_vals = [d['k'] for d in analysis_data]
 
-    # Создаем большой график с тремя панелями
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 8))
+    # Создаем график с уменьшенным размером
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(16, 5))
 
     # 1. График k vs Z_eff с умным позиционированием
     ax1.loglog(zeff_vals, k_vals, 'o', alpha=0.5, markersize=10, color='blue')
@@ -750,18 +936,41 @@ def plot_optimized_labels(params):
     ax3.legend(loc='best')
 
     plt.tight_layout()
-    plt.savefig('optimized_labels.png', dpi=300, bbox_inches='tight')
-    print("График с оптимизированными подписями сохранен как 'optimized_labels.png'")
-    plt.show()
+    plt.savefig('optimized_labels.png', dpi=reduced_dpi, bbox_inches='tight')
+    print(f"График с оптимизированными подписями сохранен как 'optimized_labels.png' (DPI={reduced_dpi})")
+    plt.close(fig)  # Закрываем фигуру для освобождения памяти
 
 
 def main():
+    """Главная функция с поддержкой аргументов командной строки"""
+    # Парсинг аргументов командной строки
+    parser = argparse.ArgumentParser(description='Анализ коэффициентов эфирного сцепления атомов')
+    parser.add_argument('--force-reload', action='store_true',
+                        help='Принудительный пересчет данных (игнорировать кэш и БД)')
+    parser.add_argument('--no-db', action='store_true',
+                        help='Не использовать базу данных (только JSON кэш)')
+    parser.add_argument('--label-every', type=int, default=3,
+                        help='Подписывать каждый N-й элемент на графиках (по умолчанию: 3)')
+    parser.add_argument('--dpi', type=int, default=150,
+                        help='Разрешение изображений (по умолчанию: 150)')
+    parser.add_argument('--skip-plots', action='store_true',
+                        help='Пропустить построение графиков')
+    parser.add_argument('--db-path', type=str, default='atomic_data.db',
+                        help='Путь к файлу базы данных (по умолчанию: atomic_data.db)')
+
+    args = parser.parse_args()
+
     print("=" * 70)
     print("АНАЛИЗ КОЭФФИЦИЕНТОВ ЭФИРНОГО СЦЕПЛЕНИЯ")
     print("=" * 70)
+    print(f"Настройки: label_every={args.label_every}, dpi={args.dpi}, use_db={not args.no_db}")
 
     # Загружаем данные (из кэша или рассчитываем)
-    elements_data = load_or_calculate_data(force_reload=False)
+    elements_data = load_or_calculate_data(
+        force_reload=args.force_reload,
+        use_db=not args.no_db,
+        db_path=args.db_path
+    )
 
     if not elements_data:
         print("Не удалось получить данные")
@@ -772,10 +981,13 @@ def main():
     # Анализ зависимостей
     params = analyze_dependencies(elements_data)
 
-    if params:
-        # Построение графиков с разными стратегиями подписей
-        plot_all_elements_with_labels(params)
-        plot_optimized_labels(params)  # Новая функция с оптимизированными подписями
+    if params and not args.skip_plots:
+        # Построение графиков с настраиваемыми параметрами
+        print("\n" + "=" * 70)
+        print("ПОСТРОЕНИЕ ГРАФИКОВ")
+        print("=" * 70)
+        plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi)
+        plot_optimized_labels(params, reduced_dpi=args.dpi)
 
         # Экспорт данных
         export_data_to_csv(elements_data)
