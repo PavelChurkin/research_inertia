@@ -2,7 +2,6 @@ import sqlite3
 import math
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend to prevent display issues
 import matplotlib.pyplot as plt
 from scipy import stats
 from mendeleev import element
@@ -594,13 +593,14 @@ def analyze_dependencies(elements_data):
     return {'analysis_data': analysis_data, 'valid_data': valid_data}
 
 
-def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
+def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150, show_plots=True):
     """Строит графики с подписями ВСЕХ элементов (каждый график в отдельном окне)
 
     Args:
         params: Словарь с данными для анализа
         label_every_nth: Подписывать каждый N-й элемент (по умолчанию 1 = ВСЕ элементы)
         reduced_dpi: Разрешение изображения (по умолчанию 150)
+        show_plots: Показывать графики с помощью plt.show() (по умолчанию True)
     """
     # Проверяем наличие графиков в текущей директории
     graph_files = [
@@ -682,6 +682,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
     plt.tight_layout()
     plt.savefig('graph_1_k_vs_zeff.png', dpi=reduced_dpi, bbox_inches='tight')
     print(f"   Сохранен: graph_1_k_vs_zeff.png")
+    if show_plots:
+        plt.show()
     plt.close(fig1)
 
     # ============================================================================
@@ -720,6 +722,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_2_k_vs_zeff_over_v.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_2_k_vs_zeff_over_v.png")
+        if show_plots:
+            plt.show()
         plt.close(fig2)
 
     # ============================================================================
@@ -757,6 +761,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_3_k_vs_z.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_3_k_vs_z.png")
+        if show_plots:
+            plt.show()
         plt.close(fig3)
 
     # ============================================================================
@@ -810,9 +816,15 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
     ax4.grid(True, alpha=0.3)
     ax4.legend(loc='best', fontsize=12)
 
-    plt.tight_layout()
+    # Use try-except for tight_layout to avoid UserWarning issues
+    try:
+        plt.tight_layout()
+    except:
+        pass  # If tight_layout fails, continue without it
     plt.savefig('graph_4_k_vs_zeff_by_blocks.png', dpi=reduced_dpi, bbox_inches='tight')
     print(f"   Сохранен: graph_4_k_vs_zeff_by_blocks.png")
+    if show_plots:
+        plt.show()
     plt.close(fig4)
 
     # ============================================================================
@@ -856,6 +868,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_5_k_distribution.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_5_k_distribution.png")
+        if show_plots:
+            plt.show()
         plt.close(fig5)
 
     # ============================================================================
@@ -890,6 +904,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_6_k_coefficient_dependence.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_6_k_coefficient_dependence.png")
+        if show_plots:
+            plt.show()
         plt.close(fig6)
 
     # ============================================================================
@@ -939,6 +955,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_7_mass_defect_per_volume.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_7_mass_defect_per_volume.png")
+        if show_plots:
+            plt.show()
         plt.close(fig7)
 
     print("\nВсе графики успешно созданы и сохранены!")
@@ -996,15 +1014,37 @@ def main():
                         help='Разрешение изображений (по умолчанию: 150)')
     parser.add_argument('--skip-plots', action='store_true',
                         help='Пропустить построение графиков')
+    parser.add_argument('--show-plots', action='store_true', default=False,
+                        help='Показывать графики с помощью plt.show() (по умолчанию: False)')
     parser.add_argument('--db-path', type=str, default='atomic_data.db',
                         help='Путь к файлу базы данных (по умолчанию: atomic_data.db)')
 
     args = parser.parse_args()
 
+    # Configure matplotlib backend based on --show-plots flag
+    if args.show_plots:
+        # Try to use interactive backend for displaying plots
+        try:
+            import matplotlib
+            matplotlib.use('TkAgg')
+            print("Используется интерактивный режим отображения графиков (TkAgg)")
+        except:
+            try:
+                import matplotlib
+                matplotlib.use('Qt5Agg')
+                print("Используется интерактивный режим отображения графиков (Qt5Agg)")
+            except:
+                print("Предупреждение: Интерактивный режим недоступен, графики будут только сохранены")
+                args.show_plots = False
+    else:
+        # Use non-interactive backend
+        import matplotlib
+        matplotlib.use('Agg')
+
     print("=" * 70)
     print("АНАЛИЗ КОЭФФИЦИЕНТОВ ЭФИРНОГО СЦЕПЛЕНИЯ")
     print("=" * 70)
-    print(f"Настройки: label_every={args.label_every}, dpi={args.dpi}, use_db={not args.no_db}")
+    print(f"Настройки: label_every={args.label_every}, dpi={args.dpi}, use_db={not args.no_db}, show_plots={args.show_plots}")
 
     # Загружаем данные (из кэша или рассчитываем)
     elements_data = load_or_calculate_data(
@@ -1027,10 +1067,7 @@ def main():
         print("\n" + "=" * 70)
         print("ПОСТРОЕНИЕ ГРАФИКОВ (КАЖДЫЙ В ОТДЕЛЬНОМ ФАЙЛЕ)")
         print("=" * 70)
-        plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi)
-
-        # Экспорт данных
-        export_data_to_csv(elements_data)
+        plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi, show_plots=args.show_plots)
 
         # Статистика
         valid_elements = [e for e in elements_data if e.get('k_coefficient')]
