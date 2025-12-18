@@ -2,7 +2,6 @@ import sqlite3
 import math
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend to prevent display issues
 import matplotlib.pyplot as plt
 from scipy import stats
 from mendeleev import element
@@ -72,6 +71,13 @@ def init_database(db_path='atomic_data.db'):
         cross_section REAL,
         mass_density_atomic REAL,
 
+        -- Mass defect calculations (nucleon-based)
+        neutron_count INTEGER,
+        proton_count INTEGER,
+        nucleon_mass_sum REAL,
+        mass_defect REAL,
+        mass_rounding_difference REAL,
+
         -- Metadata
         calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -96,7 +102,7 @@ def init_database(db_path='atomic_data.db'):
     # Сохранение версии схемы
     cursor.execute('''
     INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
-    VALUES ('schema_version', '1.0', CURRENT_TIMESTAMP)
+    VALUES ('schema_version', '2.0', CURRENT_TIMESTAMP)
     ''')
 
     conn.commit()
@@ -266,6 +272,21 @@ def load_or_calculate_data(force_reload=False, use_db=True, db_path='atomic_data
     return elements_data
 
 
+def calculate_neutron_count(atomic_mass, proton_count):
+    """Рассчитывает количество нейтронов округлением атомной массы"""
+    return round(atomic_mass) - proton_count
+
+
+def calculate_mass_rounding_difference(atomic_mass, proton_count):
+    """Рассчитывает разницу округления атомной массы
+
+    Отрицательная при округлении в меньшую сторону,
+    положительная при округлении в большую сторону
+    """
+    rounded_mass = round(atomic_mass)
+    return atomic_mass - rounded_mass
+
+
 def calculate_atomic_data(elem):
     """Рассчитывает все данные для атома"""
     atomic_mass = elem.atomic_weight
@@ -292,6 +313,21 @@ def calculate_atomic_data(elem):
 
     # Рассчитываем дополнительные параметры
     Z_eff = get_effective_nuclear_charge(elem)
+
+    # Рассчитываем массу дефекта и связанные параметры
+    proton_count = elem.atomic_number
+    neutron_count = calculate_neutron_count(atomic_mass, proton_count)
+    mass_rounding_diff = calculate_mass_rounding_difference(atomic_mass, proton_count)
+
+    # Константы масс нуклонов в а.е.м.
+    PROTON_MASS_AMU = 1.007276466812  # масса протона в а.е.м.
+    NEUTRON_MASS_AMU = 1.00866491595  # масса нейтрона в а.е.м.
+
+    # Сумма масс нуклонов
+    nucleon_mass_sum = (proton_count * PROTON_MASS_AMU) + (neutron_count * NEUTRON_MASS_AMU)
+
+    # Дефект массы: атомная масса минус сумма масс нуклонов
+    mass_defect = atomic_mass - nucleon_mass_sum
 
     # Собираем все доступные данные
     atomic_data = {
@@ -349,6 +385,13 @@ def calculate_atomic_data(elem):
         'surface_area': 4 * math.pi * (atomic_radius * 1e-12) ** 2,
         'cross_section': math.pi * (atomic_radius * 1e-12) ** 2,
         'mass_density_atomic': k,  # Это и есть k
+
+        # Расчеты дефекта массы (нуклонные)
+        'neutron_count': neutron_count,
+        'proton_count': proton_count,
+        'nucleon_mass_sum': nucleon_mass_sum,
+        'mass_defect': mass_defect,
+        'mass_rounding_difference': mass_rounding_diff,
     }
 
     return atomic_data
@@ -550,14 +593,33 @@ def analyze_dependencies(elements_data):
     return {'analysis_data': analysis_data, 'valid_data': valid_data}
 
 
-def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
+def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150, show_plots=True):
     """Строит графики с подписями ВСЕХ элементов (каждый график в отдельном окне)
 
     Args:
         params: Словарь с данными для анализа
         label_every_nth: Подписывать каждый N-й элемент (по умолчанию 1 = ВСЕ элементы)
         reduced_dpi: Разрешение изображения (по умолчанию 150)
+        show_plots: Показывать графики с помощью plt.show() (по умолчанию True)
     """
+    # Проверяем наличие графиков в текущей директории
+    graph_files = [
+        'graph_1_k_vs_zeff.png',
+        'graph_2_k_vs_zeff_over_v.png',
+        'graph_3_k_vs_z.png',
+        'graph_4_k_vs_zeff_by_blocks.png',
+        'graph_5_k_distribution.png',
+        'graph_6_k_coefficient_dependence.png',
+        'graph_7_mass_defect_per_volume.png'
+    ]
+
+    # Проверяем наличие всех графиков
+    all_graphs_exist = all(os.path.exists(f) for f in graph_files)
+
+    if all_graphs_exist:
+        print("Все графики уже существуют в текущей директории. Пропускаем генерацию.")
+        return
+
     analysis_data = params.get('analysis_data', [])
     valid_data = params.get('valid_data', [])
 
@@ -620,6 +682,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
     plt.tight_layout()
     plt.savefig('graph_1_k_vs_zeff.png', dpi=reduced_dpi, bbox_inches='tight')
     print(f"   Сохранен: graph_1_k_vs_zeff.png")
+    if show_plots:
+        plt.show()
     plt.close(fig1)
 
     # ============================================================================
@@ -658,6 +722,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_2_k_vs_zeff_over_v.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_2_k_vs_zeff_over_v.png")
+        if show_plots:
+            plt.show()
         plt.close(fig2)
 
     # ============================================================================
@@ -695,6 +761,8 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_3_k_vs_z.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_3_k_vs_z.png")
+        if show_plots:
+            plt.show()
         plt.close(fig3)
 
     # ============================================================================
@@ -748,9 +816,15 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
     ax4.grid(True, alpha=0.3)
     ax4.legend(loc='best', fontsize=12)
 
-    plt.tight_layout()
+    # Use try-except for tight_layout to avoid UserWarning issues
+    try:
+        plt.tight_layout()
+    except:
+        pass  # If tight_layout fails, continue without it
     plt.savefig('graph_4_k_vs_zeff_by_blocks.png', dpi=reduced_dpi, bbox_inches='tight')
     print(f"   Сохранен: graph_4_k_vs_zeff_by_blocks.png")
+    if show_plots:
+        plt.show()
     plt.close(fig4)
 
     # ============================================================================
@@ -794,7 +868,96 @@ def plot_all_elements_with_labels(params, label_every_nth=1, reduced_dpi=150):
         plt.tight_layout()
         plt.savefig('graph_5_k_distribution.png', dpi=reduced_dpi, bbox_inches='tight')
         print(f"   Сохранен: graph_5_k_distribution.png")
+        if show_plots:
+            plt.show()
         plt.close(fig5)
+
+    # ============================================================================
+    # ГРАФИК 6: Зависимость коэффициента сцепления от атомного номера (отдельное окно)
+    # ============================================================================
+    print("6. Создание графика: Коэффициент сцепления vs Z")
+
+    z_all = [e['atomic_number'] for e in valid_data if e.get('k_coefficient')]
+    k_all = [e['k_coefficient'] for e in valid_data if e.get('k_coefficient')]
+    symbols_all = [e['symbol'] for e in valid_data if e.get('k_coefficient')]
+
+    if z_all and k_all:
+        fig6 = plt.figure(figsize=(16, 12))
+        ax6 = fig6.add_subplot(111)
+
+        ax6.loglog(z_all, k_all, 'o', alpha=0.3, markersize=8)
+
+        # Подписываем ВСЕ элементы
+        for i, (z, k, sym) in enumerate(zip(z_all, k_all, symbols_all)):
+            if i % label_every_nth == 0:
+                ax6.text(z, k, sym,
+                         fontsize=8,
+                         ha='center',
+                         va='center',
+                         alpha=0.8)
+
+        ax6.set_xlabel('Атомный номер Z', fontsize=14)
+        ax6.set_ylabel('Коэффициент сцепления k (кг/м³)', fontsize=14)
+        ax6.set_title('Зависимость коэффициента сцепления от атомного номера', fontsize=16, pad=20)
+        ax6.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig('graph_6_k_coefficient_dependence.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"   Сохранен: graph_6_k_coefficient_dependence.png")
+        if show_plots:
+            plt.show()
+        plt.close(fig6)
+
+    # ============================================================================
+    # ГРАФИК 7: Дефект массы / объём vs атомный номер (отдельное окно)
+    # ============================================================================
+    print("7. Создание графика: Дефект массы/объём vs Z")
+
+    # Собираем данные для дефекта массы на объем
+    mass_defect_per_volume_data = []
+    for e in valid_data:
+        if (e.get('mass_defect') is not None and
+                e.get('atomic_volume_m3') is not None and
+                e.get('atomic_volume_m3') > 0):
+            # Дефект массы в кг
+            mass_defect_kg = (e['mass_defect'] * 1e-3) / 6.02214076e23
+            defect_per_volume = abs(mass_defect_kg / e['atomic_volume_m3'])
+            mass_defect_per_volume_data.append({
+                'z': e['atomic_number'],
+                'defect_per_volume': defect_per_volume,
+                'symbol': e['symbol']
+            })
+
+    if mass_defect_per_volume_data:
+        fig7 = plt.figure(figsize=(16, 12))
+        ax7 = fig7.add_subplot(111)
+
+        z_vals = [d['z'] for d in mass_defect_per_volume_data]
+        defect_vals = [d['defect_per_volume'] for d in mass_defect_per_volume_data]
+        symbols_vals = [d['symbol'] for d in mass_defect_per_volume_data]
+
+        ax7.loglog(z_vals, defect_vals, 'o', alpha=0.3, markersize=8, color='purple')
+
+        # Подписываем ВСЕ элементы
+        for i, (z, defect, sym) in enumerate(zip(z_vals, defect_vals, symbols_vals)):
+            if i % label_every_nth == 0:
+                ax7.text(z, defect, sym,
+                         fontsize=8,
+                         ha='center',
+                         va='center',
+                         alpha=0.8)
+
+        ax7.set_xlabel('Атомный номер Z', fontsize=14)
+        ax7.set_ylabel('|Дефект массы| / Объём (кг/м³)', fontsize=14)
+        ax7.set_title('Зависимость дефекта массы на объём от атомного номера', fontsize=16, pad=20)
+        ax7.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig('graph_7_mass_defect_per_volume.png', dpi=reduced_dpi, bbox_inches='tight')
+        print(f"   Сохранен: graph_7_mass_defect_per_volume.png")
+        if show_plots:
+            plt.show()
+        plt.close(fig7)
 
     print("\nВсе графики успешно созданы и сохранены!")
 
@@ -851,15 +1014,37 @@ def main():
                         help='Разрешение изображений (по умолчанию: 150)')
     parser.add_argument('--skip-plots', action='store_true',
                         help='Пропустить построение графиков')
+    parser.add_argument('--show-plots', action='store_true', default=False,
+                        help='Показывать графики с помощью plt.show() (по умолчанию: False)')
     parser.add_argument('--db-path', type=str, default='atomic_data.db',
                         help='Путь к файлу базы данных (по умолчанию: atomic_data.db)')
 
     args = parser.parse_args()
 
+    # Configure matplotlib backend based on --show-plots flag
+    if args.show_plots:
+        # Try to use interactive backend for displaying plots
+        try:
+            import matplotlib
+            matplotlib.use('TkAgg')
+            print("Используется интерактивный режим отображения графиков (TkAgg)")
+        except:
+            try:
+                import matplotlib
+                matplotlib.use('Qt5Agg')
+                print("Используется интерактивный режим отображения графиков (Qt5Agg)")
+            except:
+                print("Предупреждение: Интерактивный режим недоступен, графики будут только сохранены")
+                args.show_plots = False
+    else:
+        # Use non-interactive backend
+        import matplotlib
+        matplotlib.use('Agg')
+
     print("=" * 70)
     print("АНАЛИЗ КОЭФФИЦИЕНТОВ ЭФИРНОГО СЦЕПЛЕНИЯ")
     print("=" * 70)
-    print(f"Настройки: label_every={args.label_every}, dpi={args.dpi}, use_db={not args.no_db}")
+    print(f"Настройки: label_every={args.label_every}, dpi={args.dpi}, use_db={not args.no_db}, show_plots={args.show_plots}")
 
     # Загружаем данные (из кэша или рассчитываем)
     elements_data = load_or_calculate_data(
@@ -882,10 +1067,7 @@ def main():
         print("\n" + "=" * 70)
         print("ПОСТРОЕНИЕ ГРАФИКОВ (КАЖДЫЙ В ОТДЕЛЬНОМ ФАЙЛЕ)")
         print("=" * 70)
-        plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi)
-
-        # Экспорт данных
-        export_data_to_csv(elements_data)
+        plot_all_elements_with_labels(params, label_every_nth=args.label_every, reduced_dpi=args.dpi, show_plots=args.show_plots)
 
         # Статистика
         valid_elements = [e for e in elements_data if e.get('k_coefficient')]
