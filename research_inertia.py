@@ -208,7 +208,12 @@ def get_effective_nuclear_charge(elem):
                     S += count * 0.35
             elif n == n_outer - 1:
                 # Одна оболочка ниже (n-1)
-                S += count * 0.85
+                # Важно: для s/p орбиталей коэффициент 0.85, для d/f - 1.00
+                if orb in ['s', 'p']:
+                    S += count * 0.85
+                else:
+                    # d, f орбитали считаются как внутренний слой
+                    S += count * 1.00
             elif n < n_outer - 1:
                 # Две и более оболочек ниже (n-2 и глубже)
                 S += count * 1.00
